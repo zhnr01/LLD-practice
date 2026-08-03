@@ -339,6 +339,97 @@ Each unrelated import family is a responsibility. This class is doing five thing
 
 > **Rule:** Refuse to let any single class exceed three responsibilities. One is ideal. Two is acceptable. Three is the last warning. Four or more = refactor immediately.
 
+## Responsibility Counting Algorithm
+
+Every time you look at a class, do this exact sequence. Never skip a step.
+
+---
+
+**Step 1: Write every method on the left side.**
+
+```
+register()
+login()
+_hash()
+smtp.send()
+print("[LOG]")
+```
+
+---
+
+**Step 2: Next to each method, write ONE word for the world it belongs to.**
+
+Not what it does. What world does it live in?
+
+```
+register()      auth
+login()         auth
+_hash()         auth
+smtp.send()     email
+print("[LOG]")  logging
+```
+## The Real Definition of a "World"
+
+A world is not a technology category. It is a **reason to change**, which maps to
+**a person or team who would call you to change the code.**
+
+That is the only test that matters.
+
+---
+
+## The Fixed Worlds List (Backend, 90% of cases)
+
+| World | Who owns it | Examples |
+|---|---|---|
+| Persistence | DBA / backend infra | queries, saves, finds, migrations |
+| Business logic | Product team | rules, calculations, validations, workflows |
+| Communication | Email / infra team | SMTP, SMS, push, Slack |
+| Observability | DevOps team | logs, metrics, traces |
+| Presentation | Frontend / API team | serialization, formatting, response shaping |
+| Security | Security team | tokens, auth rules, encryption policy |
+
+These six cover almost every backend class you will ever write.
+When you look at a method, ask which column it falls under.
+
+---
+
+## The Private Helper Rule
+
+Private methods (`_hash`, `_format`, `_validate`) almost never get their own class.
+
+Ask: "Can you imagine anyone calling you JUST to change this helper,
+without also changing the public method that uses it?"
+
+If no, the helper belongs to the same class as the method that uses it.
+If the helper is called from five different classes, then it earns its own class.
+
+---
+
+## The Dead Simple Tiebreaker
+
+When you cannot decide which world a method belongs to, ask:
+
+> "If this method changed tomorrow, who sent the Slack message asking for the change?"
+
+Same person for two methods = same world = same class.
+Different people = different worlds = split into different classes.
+---
+
+**Step 3: Circle the distinct words.**
+
+```
+auth, email, logging
+```
+
+---
+
+**Step 4: Count the circles. That number is your responsibility count.**
+
+Three circles = three responsibilities.
+Every circle that is not the first one is a reason to split.
+
+That is the whole algorithm. One word per method, count the words. Done.
+
 ---
 
 ### O — Open/Closed Principle (OCP)
