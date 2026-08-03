@@ -386,6 +386,123 @@ class DroneShipping(ShippingStrategy):
 
 **Diagnostic question:** Does the subclass honor every contract (preconditions, postconditions, invariants) of the parent?
 
+## Think of a Class as a Contract
+
+When you write a class, you are making promises to whoever calls it. Those promises fall into three categories.
+
+---
+
+### Precondition: "What I need from YOU before I run"
+
+It is the rule the caller must satisfy before calling a method.
+
+```python
+class BankAccount:
+    def deposit(self, amount: float):
+        # precondition: amount must be positive
+        if amount <= 0:
+            raise ValueError("amount must be positive")
+        self._balance += amount
+```
+
+The parent says: "give me a positive number, I will deposit it."
+
+Now a subclass **tightens** that rule:
+
+```python
+class PremiumAccount(BankAccount):
+    def deposit(self, amount: float):
+        # precondition TIGHTENED: now minimum is 100
+        if amount < 100:
+            raise ValueError("minimum deposit is 100")
+        self._balance += amount
+```
+
+This **breaks LSP**. Why? Because code written for `BankAccount` might call `deposit(50)`. That worked fine on the parent. Now you swap in `PremiumAccount` and it explodes. The subclass made the entry requirement harder, so it can no longer stand in for the parent.
+
+**LSP rule for preconditions:** subclass can only make them **equal or weaker** (accept more, not less).
+
+---
+
+### Postcondition: "What I PROMISE to give back after I run"
+
+It is the guarantee about what the method will produce or what state it will leave things in.
+
+```python
+class BankAccount:
+    def withdraw(self, amount: float):
+        # postcondition: balance is always reduced by exactly amount
+        self._balance -= amount
+```
+
+Now a subclass **weakens** that guarantee:
+
+```python
+class BonusAccount(BankAccount):
+    def withdraw(self, amount: float):
+        # sometimes deducts more due to "fees"
+        self._balance -= amount * 1.2  # surprise fees
+```
+
+This **breaks LSP**. Code that expected `withdraw(100)` to reduce balance by exactly 100 now gets a different result. The subclass delivered less than promised.
+
+**LSP rule for postconditions:** subclass can only make them **equal or stronger** (deliver more, not less).
+
+---
+
+### Invariant: "What is ALWAYS true about this object, forever"
+
+It is a rule that must hold before AND after every single method call, no matter what.
+
+```python
+class Rectangle:
+    # invariant: width and height are independent of each other
+    def set_width(self, w): self._w = w
+    def set_height(self, h): self._h = h
+```
+
+The invariant here is: setting width never touches height, and vice versa. That is always true for a Rectangle.
+
+Now Square violates it:
+
+```python
+class Square(Rectangle):
+    def set_width(self, w):
+        self._w = w
+        self._h = w   # BREAKS invariant: touching width changes height
+```
+
+Any code that does this:
+
+```python
+r = get_some_rectangle()  # could be Rectangle or Square
+r.set_width(5)
+r.set_height(10)
+print(r.area())  # expects 50
+```
+
+Gets `100` when `r` is a `Square` because setting height also reset width to 10. The invariant that "sides are independent" was silently destroyed.
+
+---
+
+## The One-Line Memory Hook
+
+> Subclass can **accept more, promise more**, but can never **accept less or promise less**.
+
+| Contract | Parent says | Subclass can | Subclass cannot |
+|---|---|---|---|
+| Precondition | "give me X" | "give me anything, including less than X" | "give me more than X" |
+| Postcondition | "I will give Y" | "I will give at least Y, maybe better" | "I will give less than Y" |
+| Invariant | "this is always true" | keep it true | silently break it |
+
+---
+
+## Back to Square/Rectangle
+
+All three violations happen at once there.
+
+The invariant "sides are independent" is broken. The postcondition "only width changes when I call `set_width`" is broken. And any caller who relied on those guarantees gets wrong results silently, no error, no warning, just wrong math. That is why it is the textbook LSP example.
+
 **Classic violation — Square inheriting Rectangle:**
 
 ```python
