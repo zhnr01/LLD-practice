@@ -1,0 +1,16 @@
+# System Design course — kept separate, will be pushed to its own repo later
+system-design-from-zero/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+*.swp

@@ -10,9 +10,8 @@
 #      That is a Protocol's job, not ABC's.
 #
 # Patterns used: Strategy (each channel is a strategy for sending), DIP, OCP, SRP.
-
 from typing import Protocol
-from dataclasses import dataclass
+from dataclasses import dataclass 
 
 
 # ------------------------------------------------------------------
