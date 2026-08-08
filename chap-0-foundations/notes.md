@@ -4,8 +4,9 @@
 >
 > This chapter exists because the SOLID and second-tier notes required artifacts they
 > never taught: class diagrams are a deliverable in P09/P10, sequence diagrams are
-> named a required interview artifact, and terms like *seam*, *composition root*, and
-> *train wreck* are used long before anything defines them.
+> named a required interview artifact, P09 asks for a state-driven design without ever
+> showing a state diagram, and terms like *seam*, *composition root*, and *train wreck*
+> are used long before anything defines them.
 >
 > Read this first. Link back to it whenever a term appears.
 
@@ -243,7 +244,193 @@ what signals you have thought past the happy path.
 
 ---
 
-## 5. What to draw, and when
+## 5. State Diagrams
+
+Listed as an artifact in the table below and required in spirit by P09, but never shown
+until now. A state diagram answers *"what states can **one** object be in, and which
+events move it between them?"*
+
+The class diagram shows structure. The sequence diagram shows one flow through time.
+The state diagram shows **every** flow one object can take — including the ones nobody
+mentioned in the requirements. That is what it is for: the arrows you *cannot* draw are
+the illegal transitions, and those are the bugs.
+
+### The example: order lifecycle
+
+Deliberately not the vending machine — that is P09, and the notes must not hand you the
+answer to an exercise.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Draft
+    Draft --> Placed: place
+    Draft --> Cancelled: cancel
+    Placed --> Paid: pay
+    Placed --> Cancelled: cancel
+    Paid --> Paid: pay
+    Paid --> Shipped: ship [all items in stock]
+    Paid --> Cancelled: cancel / refund()
+    Shipped --> Delivered: deliver
+    Delivered --> [*]
+    Cancelled --> [*]
+```
+
+Read it as six states and four events. Note what is **absent**: there is no arrow out of
+`Delivered` at all, and none out of `Shipped` labelled `cancel`. Those omissions are the
+design. A diagram whose every state connects to every other state has decided nothing.
+
+The loop `Paid --> Paid: pay` is not noise either — it is the explicit decision that a
+duplicate payment event is *absorbed* rather than rejected. Without it drawn, that
+question stays unasked until a retry hits production.
+
+### Notation
+
+| Notation | Meaning |
+| --- | --- |
+| `[*] --> A` | Initial state — where the object begins life |
+| `A --> [*]` | Final state — the object is done; no further events accepted |
+| `A --> B: event` | `event` moves the object from `A` to `B` |
+| `A --> B: event [guard]` | Transition only fires when the guard is true |
+| `A --> B: event / action` | `action` runs as part of the transition |
+| `A --> A: event` | Self-transition — the event is accepted and changes nothing |
+| `state A { ... }` | Composite state — a group with its own inner states |
+
+Two additions worth knowing:
+
+- **entry / exit actions** belong to the *state*, not the arrow. `Paid: entry / send_receipt()`
+  fires however you arrived at `Paid`. Use these when an action must happen on every
+  inbound arrow — otherwise you will forget one when a seventh transition is added.
+- **Composite states** collapse repetition. Instead of drawing `cancel` from each of
+  three states:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Active
+    state Active {
+        [*] --> Placed
+        Placed --> Paid: pay
+        Paid --> Shipped: ship
+    }
+    Active --> Cancelled: cancel
+    Shipped --> Delivered: deliver
+    Delivered --> [*]
+    Cancelled --> [*]
+```
+
+One arrow now says *"cancel works from anywhere inside `Active`."*
+
+### The completeness check
+
+This is the part that earns the diagram its keep. Put states down the side, events
+across the top, and fill in every cell. Blanks are decisions you have not made yet.
+
+| | `place` | `pay` | `ship` | `deliver` | `cancel` |
+| --- | --- | --- | --- | --- | --- |
+| **Draft** | → Placed | ✗ | ✗ | ✗ | → Cancelled |
+| **Placed** | ✗ | → Paid | ✗ | ✗ | → Cancelled |
+| **Paid** | ✗ | → Paid (ignore, idempotent) | → Shipped | ✗ | → Cancelled + refund |
+| **Shipped** | ✗ | ✗ | ✗ | → Delivered | **?** |
+| **Delivered** | ✗ | ✗ | ✗ | ✗ | ✗ |
+| **Cancelled** | ✗ | ✗ | ✗ | ✗ | ✗ |
+
+The `?` is the whole exercise. *Can you cancel a shipped order?* Nobody said. The grid
+made the gap visible; in an interview you now ask the question instead of picking
+silently. Notice too that three different answers hide behind "nothing happens":
+**reject** (`✗`, raise), **ignore** (accept, no state change), and **queue for later**.
+The grid forces you to pick one per cell.
+
+### From diagram to code
+
+The diagram transcribes directly into a transition table. One dict entry per arrow.
+
+```python
+from enum import Enum, auto
+
+
+class OrderState(Enum):
+    DRAFT = auto()
+    PLACED = auto()
+    PAID = auto()
+    SHIPPED = auto()
+    DELIVERED = auto()
+    CANCELLED = auto()
+
+
+class IllegalTransition(Exception):
+    """Raised when an event arrives that the current state does not accept."""
+
+
+# The diagram, transcribed. One entry per arrow — nothing else is legal.
+TRANSITIONS: dict[tuple[OrderState, str], OrderState] = {
+    (OrderState.DRAFT, "place"): OrderState.PLACED,
+    (OrderState.DRAFT, "cancel"): OrderState.CANCELLED,
+    (OrderState.PLACED, "pay"): OrderState.PAID,
+    (OrderState.PLACED, "cancel"): OrderState.CANCELLED,
+    (OrderState.PAID, "pay"): OrderState.PAID,          # self-loop: duplicate pay absorbed
+    (OrderState.PAID, "ship"): OrderState.SHIPPED,
+    (OrderState.PAID, "cancel"): OrderState.CANCELLED,
+    (OrderState.SHIPPED, "deliver"): OrderState.DELIVERED,
+}
+
+
+class Order:
+    def __init__(self) -> None:
+        self._state = OrderState.DRAFT
+
+    @property
+    def state(self) -> OrderState:
+        return self._state
+
+    def handle(self, event: str) -> None:
+        try:
+            self._state = TRANSITIONS[(self._state, event)]
+        except KeyError:
+            raise IllegalTransition(
+                f"cannot {event!r} an order in state {self._state.name}"
+            ) from None
+
+
+if __name__ == "__main__":
+    order = Order()
+    for event in ("place", "pay", "ship", "deliver"):
+        order.handle(event)
+        print(order.state.name)
+
+    try:
+        order.handle("cancel")      # DELIVERED has no cancel arrow — by design
+    except IllegalTransition as exc:
+        print(f"rejected: {exc}")
+```
+
+**The limit of the table** — and the reason the State pattern exists. A table encodes
+*which transitions are legal*. It cannot encode *behaviour that differs per state*: the
+guard `[all items in stock]`, the `/ refund()` action, or a `pay` that means something
+different in each state. The moment cells need their own logic, you are writing
+`if state == ...` inside `handle()`, and that is the ladder from §2 step 5 all over
+again. Promote each state to a class then — one object per state, each owning its own
+behaviour. That is exactly what P09 asks for.
+
+Rough guide, not a law: a **table** while transitions are legality-only, a **State
+pattern** once two or more states need different logic for the same event. Counter-case:
+a machine with fifteen states but only one behavioural difference is still clearer as a
+table plus one conditional than as fifteen classes.
+
+### When not to draw one
+
+- **The object has two states.** `active` / `inactive` with no illegal transitions is a
+  boolean. A diagram adds ceremony, not information.
+- **State is derived, not stored.** If "overdue" is just `due_date < today`, it is a
+  computed property. Only model states the object *transitions* between and *remembers*.
+- **The interesting behaviour is interaction, not lifecycle.** A payment flow that
+  touches four services in order wants a sequence diagram; the object itself may only
+  ever be `pending` then `settled`.
+
+The trigger to reach for one: you catch yourself saying *"…but only if it hasn't already
+been X'd."* That sentence is a missing state machine.
+
+---
+
+## 6. What to draw, and when
 
 | Question being asked | Artifact |
 | --- | --- |
